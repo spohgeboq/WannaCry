@@ -1,121 +1,157 @@
-// Глобальный контекст пользователя
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { authTelegram, completeOnboarding, getMyProfile } from '../services/api.js';
 import { useTelegram } from '../hooks/useTelegram.js';
+import { sound } from '../services/soundEffects.js';
+import { fireConfetti } from '../services/confetti.js';
 
 const UserContext = createContext(null);
 
-/**
- * Константы уровней и XP для прогресса
- */
-const LEVELS = {
-  'Новичок': { min: 0, max: 99, next: 'Любитель' },
-  'Любитель': { min: 100, max: 299, next: 'Профи' },
-  'Профи': { min: 300, max: Infinity, next: null },
+export const LEVELS = {
+  'Новичок': { min: 0, max: 99, next: 'Любитель', icon: '🌱', color: '#10b981' },
+  'Любитель': { min: 100, max: 299, next: 'Профи', icon: '⚡', color: '#3b82f6' },
+  'Профи': { min: 300, max: 699, next: 'Мастер', icon: '🔥', color: '#f97316' },
+  'Мастер': { min: 700, max: Infinity, next: null, icon: '👑', color: '#8b5cf6' },
 };
 
-/**
- * UserProvider — управляет состоянием пользователя во всём приложении.
- */
+export function calculateLevelFromXP(xp) {
+  if (xp >= 700) return 'Мастер';
+  if (xp >= 300) return 'Профи';
+  if (xp >= 100) return 'Любитель';
+  return 'Новичок';
+}
+
 export function UserProvider({ children }) {
   const { initData, user: telegramUser } = useTelegram();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'teams' | 'quests' | 'ai' | 'profile'
 
-  // Автоматическая авторизация при загрузке
+  // Initialize sound mute setting
+  useEffect(() => {
+    sound.setMuted(!soundEnabled);
+  }, [soundEnabled]);
+
+  // Load or authenticate user
   useEffect(() => {
     async function init() {
       try {
         setLoading(true);
-
-        if (!initData) {
-          // Режим разработки без Telegram — создаём мок-пользователя
-          setUser({
-            id: 'dev_user',
-            firstName: 'Разработчик',
-            lastName: '',
-            username: 'dev',
-            xp: 0,
-            level: 'Новичок',
-            direction: null,
-            skillLevel: null,
-            onboardingCompleted: false,
-            role: 'student',
-            registeredEvents: [],
-          });
-          setLoading(false);
-          return;
-        }
-
         const result = await authTelegram();
-        setUser(result.user);
+        if (result?.user) {
+          const userLevel = calculateLevelFromXP(result.user.xp || 0);
+          setUser({
+            ...result.user,
+            level: userLevel,
+            bookmarks: result.user.bookmarks || [],
+            registeredEvents: result.user.registeredEvents || ['kz_event_1'],
+            streak: result.user.streak || 3,
+          });
+        }
       } catch (err) {
         console.error('[AUTH] Ошибка авторизации:', err);
         setError(err.message);
-        // Fallback: используем данные из Telegram напрямую
-        if (telegramUser) {
-          setUser({
-            id: String(telegramUser.id),
-            firstName: telegramUser.first_name,
-            lastName: telegramUser.last_name || '',
-            username: telegramUser.username || '',
-            xp: 0,
-            level: 'Новичок',
-            direction: null,
-            skillLevel: null,
-            onboardingCompleted: false,
-            role: 'student',
-            registeredEvents: [],
-          });
-        }
+        // Fallback default
+        setUser({
+          id: 'dev_user_ermek',
+          firstName: 'Ермек',
+          lastName: 'Сериков',
+          username: 'ermek_dev',
+          xp: 150,
+          level: 'Любитель',
+          direction: 'Full-stack',
+          skillLevel: 'Любитель',
+          onboardingCompleted: true,
+          role: 'student',
+          registeredEvents: ['kz_event_1'],
+          bookmarks: ['kz_event_2'],
+          streak: 4,
+        });
       } finally {
         setLoading(false);
       }
     }
-
     init();
   }, [initData, telegramUser]);
 
-  // Завершить онбординг
+  // Save to LocalStorage whenever user state changes
+  useEffect(() => {
+    if (user) {
+      try {
+        localStorage.setItem('barinbil_user', JSON.stringify(user));
+      } catch {}
+    }
+  }, [user]);
+
+  // Complete Onboarding
   const finishOnboarding = useCallback(async (direction, skillLevel, role = 'student') => {
     try {
       const result = await completeOnboarding(direction, skillLevel, role);
+      const userLevel = calculateLevelFromXP(result?.user?.xp || 50);
       setUser(prev => ({
         ...prev,
         ...result.user,
+        level: userLevel,
         direction,
         skillLevel,
         role,
         onboardingCompleted: true,
       }));
+      sound.playAchievement();
+      fireConfetti();
       return result;
-    } catch (err) {
-      // Fallback — обновляем локально
+    } catch {
       setUser(prev => ({
         ...prev,
         direction,
         skillLevel,
         role,
         onboardingCompleted: true,
-        xp: (prev?.xp || 0) + 20,
+        xp: (prev?.xp || 0) + 50,
+        level: calculateLevelFromXP((prev?.xp || 0) + 50),
       }));
+      sound.playAchievement();
+      fireConfetti();
     }
   }, []);
 
-  // Обновить XP локально (после действия)
+  // Add XP with level up detection, sounds and confetti
   const addXP = useCallback((amount) => {
     setUser(prev => {
       if (!prev) return prev;
+      const prevLevel = calculateLevelFromXP(prev.xp || 0);
       const newXP = (prev.xp || 0) + amount;
-      let newLevel = 'Новичок';
-      if (newXP >= 300) newLevel = 'Профи';
-      else if (newXP >= 100) newLevel = 'Любитель';
-      return { ...prev, xp: newXP, level: newLevel };
+      const newLevel = calculateLevelFromXP(newXP);
+
+      if (newLevel !== prevLevel) {
+        sound.playLevelUp();
+        fireConfetti({ count: 90 });
+      } else {
+        sound.playXP();
+      }
+
+      return {
+        ...prev,
+        xp: newXP,
+        level: newLevel,
+      };
     });
   }, []);
 
-  // Добавить зарегистрированный ивент
+  // Toggle bookmark for an event
+  const toggleBookmark = useCallback((eventId) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const bookmarks = prev.bookmarks || [];
+      const exists = bookmarks.includes(eventId);
+      const updated = exists ? bookmarks.filter(id => id !== eventId) : [...bookmarks, eventId];
+      sound.playClick();
+      return { ...prev, bookmarks: updated };
+    });
+  }, []);
+
+  // Add registered event
   const addRegisteredEvent = useCallback((eventId) => {
     setUser(prev => {
       if (!prev) return prev;
@@ -124,39 +160,68 @@ export function UserProvider({ children }) {
     });
   }, []);
 
-  // Обновить профиль
-  const refreshProfile = useCallback(async () => {
-    try {
-      const result = await getMyProfile();
-      setUser(result.user);
-    } catch (err) {
-      console.error('[USER] Ошибка обновления профиля:', err);
-    }
+  // Role toggle (Student <-> Organizer) for dev / testing
+  const toggleRole = useCallback(() => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const nextRole = prev.role === 'organizer' ? 'student' : 'organizer';
+      sound.playSwitch();
+      return { ...prev, role: nextRole };
+    });
   }, []);
 
+  // Reset onboarding for testing
+  const resetOnboarding = useCallback(() => {
+    setUser(prev => {
+      if (!prev) return prev;
+      return { ...prev, onboardingCompleted: false };
+    });
+    sound.playClick();
+  }, []);
+
+  // Log out
   const logout = useCallback(() => {
-    // Сбрасываем текущего пользователя (онбординг начнется заново, или просто очистим сессию)
+    localStorage.removeItem('barinbil_user');
     setUser(null);
+    window.location.reload();
   }, []);
 
-  // Вычисление прогресса XP
+  // Progress computation
   const xpProgress = (() => {
-    if (!user) return { current: 0, max: 100, percent: 0, nextLevel: 'Любитель' };
+    if (!user) return { current: 0, max: 100, percent: 0, nextLevel: 'Любитель', remaining: 100 };
     const levelInfo = LEVELS[user.level] || LEVELS['Новичок'];
-    const current = user.xp - levelInfo.min;
-    const max = levelInfo.max === Infinity ? 100 : levelInfo.max - levelInfo.min + 1;
-    const percent = Math.min(100, Math.round((current / max) * 100));
-    return { current: user.xp, max: levelInfo.max, percent, nextLevel: levelInfo.next };
+    const currentInLevel = user.xp - levelInfo.min;
+    const span = levelInfo.max === Infinity ? 300 : levelInfo.max - levelInfo.min + 1;
+    const percent = Math.min(100, Math.max(0, Math.round((currentInLevel / span) * 100)));
+    const remaining = levelInfo.max === Infinity ? 0 : levelInfo.max - user.xp + 1;
+
+    return {
+      current: user.xp,
+      levelMin: levelInfo.min,
+      levelMax: levelInfo.max,
+      percent,
+      nextLevel: levelInfo.next,
+      remaining,
+      icon: levelInfo.icon,
+      color: levelInfo.color,
+    };
   })();
 
   const value = {
     user,
+    setUser,
     loading,
     error,
+    activeTab,
+    setActiveTab,
     finishOnboarding,
     addXP,
     addRegisteredEvent,
-    refreshProfile,
+    toggleBookmark,
+    toggleRole,
+    resetOnboarding,
+    soundEnabled,
+    setSoundEnabled,
     xpProgress,
     logout,
     isOnboarded: user?.onboardingCompleted === true,
@@ -169,13 +234,10 @@ export function UserProvider({ children }) {
   );
 }
 
-/**
- * Хук для доступа к контексту пользователя.
- */
 export function useUser() {
   const context = useContext(UserContext);
   if (!context) {
-    throw new Error('useUser должен использоваться внутри UserProvider');
+    throw new Error('useUser must be used within UserProvider');
   }
   return context;
 }

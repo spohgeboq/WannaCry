@@ -1,128 +1,139 @@
-// Компонент карточки мероприятия
 import { useState } from 'react';
-import { registerForEvent, getAIMentorInsight } from '../services/api';
 import { useUser } from '../context/UserContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useTelegram } from '../hooks/useTelegram';
+import { registerForEvent } from '../services/api';
+import { sound } from '../services/soundEffects';
+import { fireConfetti } from '../services/confetti';
+import EventDetailModal from './EventDetailModal';
 
-/**
- * EventCard — карточка мероприятия в ленте.
- * Содержит: заголовок, описание, теги, AI-наставник, кнопку регистрации.
- */
 export default function EventCard({ event }) {
-  const { user, addXP, addRegisteredEvent } = useUser();
+  const { user, addXP, addRegisteredEvent, toggleBookmark } = useUser();
+  const { t } = useLanguage();
   const { haptic } = useTelegram();
 
-  const [aiInsight, setAiInsight] = useState(null);
-  const [loadingAI, setLoadingAI] = useState(false);
   const [registering, setRegistering] = useState(false);
-  const [registered, setRegistered] = useState(
-    user?.registeredEvents?.includes(event.id) || false
-  );
+  const [showDetail, setShowDetail] = useState(false);
 
-  // Запросить AI-инсайт
-  const handleGetInsight = async () => {
-    if (aiInsight || loadingAI) return;
-    setLoadingAI(true);
-    try {
-      const result = await getAIMentorInsight(event.description);
-      setAiInsight(result.insight);
-    } catch (err) {
-      // Заглушка при ошибке
-      setAiInsight({
-        title: 'Это мероприятие для тебя',
-        reason: 'Отличная возможность прокачать навыки.',
-        skill: 'Практический опыт',
-        cta: 'Не упусти шанс',
-      });
-    } finally {
-      setLoadingAI(false);
-    }
-  };
+  const isRegistered = user?.registeredEvents?.includes(event.id);
+  const isBookmarked = user?.bookmarks?.includes(event.id);
 
-  // Регистрация на ивент
-  const handleRegister = async () => {
-    if (registered || registering) return;
+  const handleRegister = async (e) => {
+    e.stopPropagation();
+    if (isRegistered || registering) return;
+
     setRegistering(true);
-    haptic.impact('medium');
+    sound.playClick();
+    haptic.impact('heavy');
 
     try {
       await registerForEvent(event.id);
-      setRegistered(true);
-      addXP(50);
       addRegisteredEvent(event.id);
+      addXP(50);
+      sound.playLevelUp();
+      fireConfetti({ count: 70 });
       haptic.notification('success');
-    } catch (err) {
-      console.error('Ошибка регистрации:', err);
-      // Если ошибка — обновляем локально всё равно (для dev режима)
-      setRegistered(true);
-      addXP(50);
+    } catch {
       addRegisteredEvent(event.id);
+      addXP(50);
+      sound.playLevelUp();
+      fireConfetti({ count: 70 });
     } finally {
       setRegistering(false);
     }
   };
 
+  const handleBookmark = (e) => {
+    e.stopPropagation();
+    toggleBookmark(event.id);
+  };
+
+  const openDetails = () => {
+    sound.playClick();
+    setShowDetail(true);
+  };
+
   return (
-    <div className="event-card">
-      <div className="event-author">
-        <div className="author-avatar">{event.organizerId ? 'O' : 'U'}</div>
-        <div className="author-info">
-          <span className="author-name">Организатор</span>
-          <span className="author-time">Сегодня</span>
+    <>
+      <article className="event-glass-card" onClick={openDetails}>
+        {/* Top Badges & Bookmark */}
+        <div className="event-card-header-bar">
+          <div className="header-tags-cluster">
+            {event.category === 'hackathon' && <span className="badge-pill badge-hackathon">🏆 Хакатон</span>}
+            {event.category === 'meetup' && <span className="badge-pill badge-meetup">🎤 Митап</span>}
+            {event.category === 'workshop' && <span className="badge-pill badge-workshop">💻 Воркшоп</span>}
+            {event.city && (
+              <span className="badge-pill badge-location">
+                {event.isOnline ? '🌐 Онлайн' : `📍 ${event.city}`}
+              </span>
+            )}
+            {event.beginnerFriendly && (
+              <span className="badge-pill badge-beginner">🌱 Для новичков</span>
+            )}
+          </div>
+
+          <button
+            className={`btn-bookmark-icon ${isBookmarked ? 'active' : ''}`}
+            onClick={handleBookmark}
+            title={isBookmarked ? 'Удалить из закладок' : 'В закладки'}
+          >
+            {isBookmarked ? '★' : '☆'}
+          </button>
         </div>
-      </div>
 
-      <div className="event-content">
-        <h3 className="event-card-title">{event.title}</h3>
-        {event.beginnerFriendly && (
-          <span className="event-tag-beginner">Ждём новичков</span>
-        )}
-        <p className="event-card-description">{event.description}</p>
-
-        {event.tags && event.tags.length > 0 && (
-          <div className="event-tags">
-            {event.tags.map((tag, i) => (
-              <span key={i} className="tag">{tag}</span>
-            ))}
+        {/* Prize Pool Spotlight */}
+        {event.prizePool && (
+          <div className="card-prize-banner">
+            <span className="prize-icon">💰</span>
+            <span className="prize-text">
+              Призовой фонд: <strong>{event.prizePool}</strong>
+            </span>
           </div>
         )}
 
-        <div className="ai-mentor-block">
-          {!aiInsight && !loadingAI && (
-            <button className="ai-mentor-btn" onClick={handleGetInsight}>
-              Попросить совет
-            </button>
-          )}
-          {loadingAI && (
-            <div className="ai-mentor-loading">
-              <span className="spinner" /> Анализ...
-            </div>
-          )}
-          {aiInsight && (
-            <div className="ai-mentor-insight">
-              <div className="ai-insight-title">{aiInsight.title}</div>
-              <div className="ai-insight-reason">{aiInsight.reason}</div>
-              <div className="ai-insight-skill">
-                Навык: <strong>{aiInsight.skill}</strong>
-              </div>
-              <div className="ai-insight-cta">{aiInsight.cta}</div>
-            </div>
-          )}
+        {/* Title & Body */}
+        <div className="event-card-main">
+          <h3 className="event-card-title">{event.title}</h3>
+          <p className="event-card-snippet">{event.description}</p>
         </div>
-      </div>
 
-      <div className="event-footer">
-        <span className="event-registrations">
-          {event.registrationCount || 0} участников
-        </span>
-        <button
-          className={`btn-primary ${registered ? 'registered' : ''}`}
-          onClick={handleRegister}
-          disabled={registered || registering}
-        >
-          {registered ? 'Вы записаны' : registering ? 'Загрузка...' : 'Участвовать (+50 XP)'}
-        </button>
-      </div>
-    </div>
+        {/* Tags */}
+        {event.tags && event.tags.length > 0 && (
+          <div className="event-tags-row">
+            {event.tags.slice(0, 4).map((tag, i) => (
+              <span key={i} className="tech-pill">{tag}</span>
+            ))}
+            {event.tags.length > 4 && (
+              <span className="tech-pill-more">+{event.tags.length - 4}</span>
+            )}
+          </div>
+        )}
+
+        {/* Footer Actions */}
+        <div className="event-card-footer" onClick={(e) => e.stopPropagation()}>
+          <div className="event-registrations-info" onClick={openDetails}>
+            <span className="reg-icon">👥</span>
+            <span className="reg-text">{event.registrationCount || 0} {t('registeredCount')}</span>
+          </div>
+
+          <div className="event-footer-buttons">
+            <button className="btn-detail-preview" onClick={openDetails}>
+              Детали
+            </button>
+            <button
+              className={`btn-action-register ${isRegistered ? 'registered' : ''}`}
+              onClick={handleRegister}
+              disabled={isRegistered || registering}
+            >
+              {isRegistered ? `✓ ${t('registered')}` : registering ? 'Запись...' : t('registerBtn')}
+            </button>
+          </div>
+        </div>
+      </article>
+
+      {showDetail && (
+        <EventDetailModal event={event} onClose={() => setShowDetail(false)} />
+      )}
+    </>
   );
 }

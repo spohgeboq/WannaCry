@@ -1,55 +1,117 @@
-// Страница ленты мероприятий
 import { useUser } from '../context/UserContext';
+import { useLanguage } from '../context/LanguageContext';
+import { useTheme } from '../context/ThemeContext';
 import XPBar from '../components/XPBar';
 import Feed from '../components/Feed';
+import TeamFinder from '../components/TeamFinder';
+import QuestsAchievements from '../components/QuestsAchievements';
+import AICoachModal from '../components/AICoachModal';
+import ProfilePage from './ProfilePage';
 import { useNavigate } from 'react-router-dom';
+import { sound } from '../services/soundEffects';
 
-/**
- * FeedPage — основная страница приложения.
- * Навигация различается по ролям:
- *  - Участник: Лента + Профиль
- *  - Организатор: Лента + Создать + Профиль
- */
 export default function FeedPage() {
-  const { user } = useUser();
+  const { user, activeTab, setActiveTab } = useUser();
+  const { lang, setLang, t } = useLanguage();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
   const isOrganizer = user?.role === 'organizer';
 
   return (
-    <div className="feed-page">
-      {/* Шапка с XP */}
-      <header className="app-header">
-        <div className="header-left">
-          <h1 className="app-title">BarinBil</h1>
-          <span className="role-badge">
-            {isOrganizer ? 'Организатор' : 'Участник'}
-          </span>
+    <div className="feed-page-layout">
+      {/* Universal Sticky Header */}
+      <header className="app-header-glass">
+        <div className="header-brand-box" onClick={() => setActiveTab('feed')}>
+          <div className="brand-logo-ring">⚡</div>
+          <div className="brand-titles">
+            <h1 className="brand-title">BarinBil</h1>
+            <span className="brand-subtitle">Tech Events Hub</span>
+          </div>
         </div>
-        <div className="header-right">
-          <button className="profile-btn" onClick={() => navigate('/profile')}>
-            <span className="profile-avatar">
-              {user?.firstName?.charAt(0) || '?'}
-            </span>
+
+        <div className="header-controls-row">
+          {/* Language quick toggle */}
+          <button
+            className="header-lang-btn"
+            onClick={() => {
+              sound.playClick();
+              setLang(lang === 'ru' ? 'kz' : lang === 'kz' ? 'en' : 'ru');
+            }}
+            title="Сменить язык"
+          >
+            {lang.toUpperCase()}
+          </button>
+
+          {/* Theme quick toggle */}
+          <button
+            className="header-theme-btn"
+            onClick={() => {
+              sound.playClick();
+              toggleTheme();
+            }}
+            title="Переключить тему"
+          >
+            {theme === 'dark' ? '🌙' : theme === 'light' ? '☀️' : '🔮'}
+          </button>
+
+          {/* Organizer create button */}
+          {isOrganizer && (
+            <button
+              className="header-create-btn"
+              onClick={() => {
+                sound.playClick();
+                navigate('/create');
+              }}
+            >
+              + {t('createEvent')}
+            </button>
+          )}
+
+          {/* Profile Avatar */}
+          <button
+            className={`header-avatar-circle ${activeTab === 'profile' ? 'active' : ''}`}
+            onClick={() => {
+              sound.playSwitch();
+              setActiveTab('profile');
+            }}
+          >
+            {user?.firstName?.charAt(0) || '👤'}
           </button>
         </div>
       </header>
 
-      {/* XP Bar */}
-      <XPBar />
+      {/* Dynamic View Tab Body */}
+      <main className="tab-view-content">
+        {activeTab === 'feed' && (
+          <>
+            <XPBar />
+            <Feed />
+          </>
+        )}
 
-      {/* Навигация — различается по ролям */}
-      {isOrganizer && (
-        <nav className="feed-nav">
-          <button className="nav-btn active">Все мероприятия</button>
-          <button className="nav-btn" onClick={() => navigate('/create')}>
-            + Создать
-          </button>
-        </nav>
-      )}
+        {activeTab === 'teams' && (
+          <>
+            <XPBar />
+            <TeamFinder />
+          </>
+        )}
 
-      {/* Лента мероприятий */}
-      <Feed />
+        {activeTab === 'quests' && (
+          <>
+            <XPBar />
+            <QuestsAchievements />
+          </>
+        )}
+
+        {activeTab === 'ai' && (
+          <AICoachModal />
+        )}
+
+        {activeTab === 'profile' && (
+          <ProfilePage />
+        )}
+      </main>
     </div>
   );
 }
